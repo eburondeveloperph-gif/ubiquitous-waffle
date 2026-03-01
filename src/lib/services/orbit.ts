@@ -41,6 +41,53 @@ export async function orbitCoreRequest(method: string, endpoint: string, payload
   return res.json();
 }
 
+/** Upload a file to VAPI for use in knowledge bases. Returns file object with id. */
+export async function uploadFile(file: Blob, filename?: string): Promise<{ id: string }> {
+  const orbitSecret = getOrbitSecret();
+  if (!orbitSecret) {
+    throw new Error('Missing agents API key. Set ORBIT_SECRET in .env.local (server-side only).');
+  }
+  const formData = new FormData();
+  formData.append('file', file, filename || 'document');
+  const res = await fetch('https://api.vapi.ai/file', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${orbitSecret}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || 'File upload failed');
+  }
+  const data = (await res.json()) as { id?: string };
+  if (!data?.id) throw new Error('No file ID returned from VAPI');
+  return { id: data.id };
+}
+
+/** Create a query tool with knowledge base files. Returns tool id. */
+export async function createQueryTool(params: {
+  name: string;
+  description: string;
+  fileIds: string[];
+}): Promise<{ id: string }> {
+  const { name, description, fileIds } = params;
+  if (fileIds.length === 0) throw new Error('At least one file ID required');
+  const payload = {
+    type: 'query',
+    function: { name: name.replace(/\s+/g, '-').toLowerCase() || 'knowledge-search' },
+    knowledgeBases: [
+      {
+        provider: 'google',
+        name,
+        description,
+        fileIds,
+      },
+    ],
+  };
+  const data = (await orbitCoreRequest('POST', '/tool', payload)) as { id?: string };
+  if (!data?.id) throw new Error('No tool ID returned from VAPI');
+  return { id: data.id };
+}
+
 export async function fetchAssistants() {
   // Keep the dashboard usable when Orbit is not configured.
   if (!getOrbitSecret()) return [];
@@ -65,7 +112,7 @@ export type VapiAssistant = {
   id: string;
   name?: string;
   firstMessage?: string;
-  model?: { messages?: { role?: string; content?: string }[] };
+  model?: { messages?: { role?: string; content?: string }[]; toolIds?: string[] };
   voice?: { provider?: string; voiceId?: string };
   transcriber?: { language?: string };
   [key: string]: unknown;
@@ -79,7 +126,7 @@ export async function fetchAssistantById(id: string) {
 export async function updateAssistant(id: string, payload: Partial<{
   name: string;
   firstMessage: string;
-  model: { provider: string; model: string; messages: { role: string; content: string }[] };
+  model: { provider: string; model: string; messages: { role: string; content: string }[]; toolIds?: string[] };
   voice: { provider: string; voiceId: string };
   transcriber: { provider: string; model: string; language: string };
 }>) {
@@ -112,8 +159,9 @@ export async function createAssistantFromScratch(params: {
   systemPrompt: string;
   language?: string;
   voice?: { provider: 'vapi' | '11labs'; voiceId: string };
+  toolIds?: string[];
 }) {
-  const { name, firstMessage, systemPrompt, language, voice } = params;
+  const { name, firstMessage, systemPrompt, language, voice, toolIds } = params;
   const voiceConfig = voice?.provider && voice?.voiceId
     ? { provider: voice.provider as 'vapi' | '11labs', voiceId: voice.voiceId }
     : { provider: '11labs' as const, voiceId: 'EXAVITQu4vr4xnSDxMaL' };
@@ -127,6 +175,7 @@ export async function createAssistantFromScratch(params: {
       messages: [
         { role: 'system' as const, content: systemPrompt || 'You are a helpful AI assistant.' },
       ],
+      ...(toolIds?.length ? { toolIds } : {}),
     },
     voice: voiceConfig,
     transcriber: {

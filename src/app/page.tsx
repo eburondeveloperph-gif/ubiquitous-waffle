@@ -23,7 +23,9 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronRight,
-  FileText
+  FileText,
+  Database,
+  X
 } from "lucide-react";
 
 import OrbitCore from "@vapi-ai/web";
@@ -666,6 +668,8 @@ export default function Dashboard() {
   const [agentVoice, setAgentVoice] = useState("vapi:elliot");
   const [agentIntroSpiel, setAgentIntroSpiel] = useState(DEFAULT_AGENT_INTRO);
   const [agentSkillsPrompt, setAgentSkillsPrompt] = useState(DEFAULT_AGENT_SKILLS);
+  const [agentKnowledgeFiles, setAgentKnowledgeFiles] = useState<{ id: string; name: string }[]>([]);
+  const [isUploadingKnowledge, setIsUploadingKnowledge] = useState(false);
   const [dialerNumber, setDialerNumber] = useState("");
   const [phonebookEntries, setPhonebookEntries] = useState<{ name: string; number: string }[]>([]);
   const [selectedDialerAgentId, setSelectedDialerAgentId] = useState("");
@@ -884,8 +888,47 @@ export default function Dashboard() {
 
   const handleEditAgain = useCallback(() => {
     setAgentStatus("");
+    setAgentKnowledgeFiles([]);
     loadAgentFormDefaults();
   }, [loadAgentFormDefaults]);
+
+  const handleKnowledgeBaseUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    const allowed = ["txt", "pdf", "docx", "doc", "csv", "md", "tsv", "yaml", "yml", "json", "xml", "log"];
+    const valid = files.filter((f) => {
+      const ext = f.name?.split(".").pop()?.toLowerCase() || "";
+      return allowed.includes(ext) && f.size <= 300 * 1024;
+    });
+    if (valid.length === 0) {
+      setAgentStatus("Use .txt, .pdf, .docx, .csv, .md, .json, etc. (max 300KB each).");
+      return;
+    }
+    setIsUploadingKnowledge(true);
+    setAgentStatus("");
+    try {
+      const uploaded: { id: string; name: string }[] = [];
+      for (const file of valid) {
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch("/api/orbit/file", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Upload failed");
+        uploaded.push({ id: data.id, name: file.name });
+      }
+      setAgentKnowledgeFiles((prev) => [...prev, ...uploaded]);
+      setAgentStatus(`${uploaded.length} file(s) added to knowledge base.`);
+    } catch (err) {
+      setAgentStatus("Error: " + (err instanceof Error ? err.message : "Upload failed"));
+    } finally {
+      setIsUploadingKnowledge(false);
+      e.target.value = "";
+    }
+  }, []);
+
+  const removeKnowledgeFile = useCallback((id: string) => {
+    setAgentKnowledgeFiles((prev) => prev.filter((f) => f.id !== id));
+  }, []);
 
   const handleCreateMyAgent = async () => {
     if (!newAgentName.trim()) {
@@ -912,6 +955,9 @@ export default function Dashboard() {
         voice,
       };
       if (isUpdate) body.assistantId = userAssistantId;
+      if (agentKnowledgeFiles.length > 0) {
+        body.fileIds = agentKnowledgeFiles.map((f) => f.id);
+      }
       const res = await fetch("/api/orbit/agents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -921,6 +967,7 @@ export default function Dashboard() {
       if (!res.ok) throw new Error(data?.error || (isUpdate ? "Agent update failed" : "Agent creation failed"));
       const assistantId = data.id;
       setAgentStatus(isUpdate ? "Agent updated! Loading into dialer." : "Agent created! Loading into dialer.");
+      setAgentKnowledgeFiles([]);
       setSelectedDialerAgentId(assistantId);
       setUserAssistantId(assistantId);
       setAgentBases((prev) => {
@@ -1734,6 +1781,48 @@ export default function Dashboard() {
                       onChange={(e) => setAgentSkillsPrompt(e.target.value)}
                       rows={4}
                     />
+                  </div>
+                  <div className="field">
+                    <label>Knowledge Base</label>
+                    <div className="upload-zone" onClick={() => document.getElementById("agentKnowledgeFiles")?.click()}>
+                      <Database size={24} className="mb-2 mx-auto" />
+                      <div>
+                        {isUploadingKnowledge ? (
+                          <Loader2 size={16} className="animate-spin mx-auto" />
+                        ) : (
+                          "Upload docs (PDF, TXT, DOCX, CSV, MD, JSON…)"
+                        )}
+                      </div>
+                      <span className="text-2xs text-muted">Max 300KB per file</span>
+                      <input
+                        type="file"
+                        id="agentKnowledgeFiles"
+                        multiple
+                        accept=".txt,.pdf,.docx,.doc,.csv,.md,.tsv,.yaml,.yml,.json,.xml,.log"
+                        onChange={handleKnowledgeBaseUpload}
+                        hidden
+                      />
+                    </div>
+                    {agentKnowledgeFiles.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {agentKnowledgeFiles.map((f) => (
+                          <span
+                            key={f.id}
+                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-2xs"
+                          >
+                            {f.name}
+                            <button
+                              type="button"
+                              className="p-0.5 hover:bg-white/10 rounded"
+                              onClick={() => removeKnowledgeFile(f.id)}
+                              aria-label="Remove"
+                            >
+                              <X size={12} />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-2 mt-2">
                     <button

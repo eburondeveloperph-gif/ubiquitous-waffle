@@ -1,23 +1,57 @@
 import { NextResponse } from 'next/server';
-import { createAgent, createAssistantFromScratch, updateAssistant, toNova2Language } from '@/lib/services/orbit';
+import {
+  createAgent,
+  createAssistantFromScratch,
+  updateAssistant,
+  toNova2Language,
+  createQueryTool,
+  fetchAssistantById,
+} from '@/lib/services/orbit';
+
+const KNOWLEDGE_TOOL_NAME = 'knowledge-search';
+
+function buildSystemPrompt(base: string, hasKnowledgeBase: boolean): string {
+  if (!hasKnowledgeBase) return base;
+  const instruction = `\n\nYou have a knowledge base with uploaded documents. You MUST use the '${KNOWLEDGE_TOOL_NAME}' tool to search your knowledge base before answering any question that could be answered from those documents. Treat the knowledge base as your primary source of truth—always call '${KNOWLEDGE_TOOL_NAME}' first when users ask about products, services, policies, procedures, or any topic that may be covered in your uploaded files. Do not rely on general knowledge when the answer might be in your documents.`;
+  return base.trim() + instruction;
+}
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
+    const fileIds = Array.isArray(body.fileIds) ? body.fileIds.filter((id: unknown) => typeof id === 'string') : [];
+    let toolIds: string[] = [];
+
+    if (fileIds.length > 0) {
+      const { id: toolId } = await createQueryTool({
+        name: KNOWLEDGE_TOOL_NAME,
+        description: 'Contains custom knowledge base documents for answering user questions accurately.',
+        fileIds,
+      });
+      toolIds = [toolId];
+    }
+
+    const systemPrompt = buildSystemPrompt(
+      body.systemPrompt || 'You are a helpful AI assistant.',
+      toolIds.length > 0
+    );
+
     // Update existing assistant when assistantId is provided
     if (body.assistantId && body.name && (body.systemPrompt ?? body.firstMessage)) {
       const voice = body.voice
         ? { provider: body.voice.provider || '11labs', voiceId: body.voice.voiceId }
         : undefined;
+      const existing = await fetchAssistantById(body.assistantId);
+      const currentModel = existing?.model as { toolIds?: string[] } | undefined;
+      const mergedToolIds = toolIds.length > 0 ? toolIds : currentModel?.toolIds;
       const result = await updateAssistant(body.assistantId, {
         name: body.name,
         firstMessage: body.firstMessage || undefined,
         model: {
           provider: 'openai',
           model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: body.systemPrompt || 'You are a helpful AI assistant.' },
-          ],
+          messages: [{ role: 'system', content: systemPrompt }],
+          ...(mergedToolIds?.length ? { toolIds: mergedToolIds } : {}),
         },
         ...(voice && { voice: voice }),
         ...(body.language !== undefined && {
@@ -35,9 +69,10 @@ export async function POST(req: Request) {
       const result = await createAssistantFromScratch({
         name: body.name,
         firstMessage: body.firstMessage || '',
-        systemPrompt: body.systemPrompt || 'You are a helpful AI assistant.',
+        systemPrompt,
         language: body.language,
         voice: body.voice,
+        toolIds: toolIds.length > 0 ? toolIds : undefined,
       });
       return NextResponse.json(result);
     }

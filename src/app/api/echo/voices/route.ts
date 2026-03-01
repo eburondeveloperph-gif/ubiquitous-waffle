@@ -1,0 +1,12 @@
+import { NextResponse } from 'next/server';
+import { fetchVoices } from '@/lib/services/echo';
+
+export async function GET() {
+  try {
+    const voices = await fetchVoices();
+    return NextResponse.json(voices);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

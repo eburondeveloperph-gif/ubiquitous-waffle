@@ -1,0 +1,19 @@
+port: 7880
+log_level: info
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: false
+
+redis:
+  address: redis:6379
+
+# For production, enable TURN and set a real domain + certificates.
+# turn:
+#   enabled: true
+#   domain: turn.your-domain.com
+#   tls_port: 443
+#   cert_file: /etc/livekit/certs/turn.crt
+#   key_file: /etc/livekit/certs/turn.key

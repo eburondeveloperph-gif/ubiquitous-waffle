@@ -93,6 +93,7 @@ export default function Dashboard() {
 
   const [history, setHistory] = useState<UserTtsHistoryItem[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const historyAudioRef = useRef<HTMLAudioElement>(null);
   const playHistoryAbortRef = useRef<AbortController | null>(null);
   const [historyAudioUrl, setHistoryAudioUrl] = useState<string | null>(null);
@@ -257,13 +258,16 @@ export default function Dashboard() {
   const fetchRealTimeHistory = useCallback(async () => {
     if (!user) {
       setHistory([]);
+      setHistoryError(null);
       return;
     }
     setIsHistoryLoading(true);
+    setHistoryError(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) {
         setHistory([]);
+        setHistoryError("Not signed in.");
         return;
       }
       const res = await fetch("/api/tts-history", {
@@ -271,14 +275,16 @@ export default function Dashboard() {
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
-        console.warn("TTS history fetch failed:", res.status, errBody);
+        const msg = (errBody as { error?: string })?.error || `Failed to load history (${res.status})`;
+        setHistoryError(msg);
         setHistory([]);
         return;
       }
       const data = await res.json();
       setHistory(Array.isArray(data) ? data : []);
     } catch (err) {
-      console.error("Failed to fetch history:", err);
+      const msg = err instanceof Error ? err.message : "Failed to fetch history.";
+      setHistoryError(msg);
       setHistory([]);
     } finally {
       setIsHistoryLoading(false);
@@ -1993,6 +1999,12 @@ export default function Dashboard() {
                   <div className="history-list">
                     {isHistoryLoading ? (
                       <div className="placeholder-pane h-32 flex items-center justify-center"><Loader2 className="animate-spin" size={24} /></div>
+                    ) : historyError ? (
+                      <div className="placeholder-pane h-32 flex flex-col items-center justify-center gap-2 text-center">
+                        <span className="text-bad">{historyError}</span>
+                        <span className="text-2xs text-muted">Ensure Supabase tables exist (run SETUP.sql) and RLS policies allow access.</span>
+                        <button className="btn text-2xs mt-2" onClick={fetchRealTimeHistory}>Retry</button>
+                      </div>
                     ) : history.length === 0 ? (
                       <div className="placeholder-pane h-32 flex items-center justify-center text-muted">No TTS history yet. Generate speech to see it here.</div>
                     ) : (

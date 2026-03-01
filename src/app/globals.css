@@ -6,6 +6,7 @@
   --bg: #09090b;
   --panel: rgba(255, 255, 255, 0.04);
   --stroke: rgba(255, 255, 255, 0.1);
+  --border: rgba(255, 255, 255, 0.1);
   --faint: #71717a;
   --muted: #a1a1aa;
   --ink: #ffffff;
@@ -46,6 +47,7 @@ body.light-mode {
   --bg: #f1f5f9;
   --panel: #ffffff;
   --stroke: #cbd5e1;
+  --border: #e2e8f0;
   --faint: #64748b;
   --muted: #475569;
   --ink: #0f172a;

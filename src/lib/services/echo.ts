@@ -57,7 +57,7 @@ export type HistoryItem = {
 /** User-specific TTS history record (saved in our DB + storage). */
 export type UserTtsHistoryItem = {
   id: string;
-  user_id: string;
+  user_id?: string;
   text: string;
   voice_id: string;
   voice_name: string;

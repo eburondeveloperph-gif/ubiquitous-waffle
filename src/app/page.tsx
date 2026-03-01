@@ -1562,45 +1562,54 @@ export default function Dashboard() {
                         ))}
                       </div>
                       <div className="dialer-actions">
-                        <button
-                          className="btn primary dialer-call-btn"
-                          onClick={async () => {
-                            const num = dialerNumber.replace(/\s/g, "").replace(/[^\d+]/g, "");
-                            if (!num) return;
-                            if (!selectedDialerAgentId) {
-                              setDialerCallStatus("Select an agent first.");
-                              return;
-                            }
-                            setIsDialerCalling(true);
-                            setDialerCallStatus("");
-                            try {
-                              const res = await fetch("/api/orbit/call", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ assistantId: selectedDialerAgentId, customerNumber: num }),
-                              });
-                              const data = await res.json();
-                              if (!res.ok) throw new Error(data?.error || "Outbound call failed");
-                              setDialerCallStatus("Call initiated. Calling the number.");
-                              fetchCallLogs();
-                            } catch (err) {
-                              setDialerCallStatus("Error: " + (err instanceof Error ? err.message : "Call failed"));
-                            } finally {
-                              setIsDialerCalling(false);
-                            }
-                          }}
-                          disabled={!dialerNumber.trim() || isDialerCalling}
-                        >
-                          {isDialerCalling ? <Loader2 size={20} className="animate-spin" /> : <Phone size={20} />}
-                          {isDialerCalling ? "Calling…" : "Call"}
-                        </button>
-                        {dialerCallStatus && (
-                          <span className={`text-2xs block mt-1 ${dialerCallStatus.startsWith("Error") ? "text-bad" : "text-muted"}`}>
-                            {dialerCallStatus}
-                          </span>
+                        {callStatus === "active" ? (
+                          <button
+                            type="button"
+                            className="dialer-end-call-btn"
+                            onClick={() => {
+                              orbit?.stop();
+                              setShowTestCallModal(false);
+                            }}
+                          >
+                            <PhoneOff size={18} />
+                            End call
+                          </button>
+                        ) : (
+                          <button
+                            className="btn primary dialer-call-btn"
+                            onClick={async () => {
+                              const num = dialerNumber.replace(/\s/g, "").replace(/[^\d+]/g, "");
+                              if (!num) return;
+                              if (!selectedDialerAgentId) {
+                                setDialerCallStatus("Select an agent first.");
+                                return;
+                              }
+                              setIsDialerCalling(true);
+                              setDialerCallStatus("");
+                              try {
+                                const res = await fetch("/api/orbit/call", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ assistantId: selectedDialerAgentId, customerNumber: num }),
+                                });
+                                const data = await res.json();
+                                if (!res.ok) throw new Error(data?.error || "Outbound call failed");
+                                setDialerCallStatus("Call initiated. Calling the number.");
+                                fetchCallLogs();
+                              } catch (err) {
+                                setDialerCallStatus("Error: " + (err instanceof Error ? err.message : "Call failed"));
+                              } finally {
+                                setIsDialerCalling(false);
+                              }
+                            }}
+                            disabled={!dialerNumber.trim() || isDialerCalling}
+                          >
+                            {isDialerCalling ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}
+                            {isDialerCalling ? "Calling…" : "Call"}
+                          </button>
                         )}
                         <label className="upload-phonebook-btn">
-                          <Upload size={14} />
+                          <Upload size={16} />
                           Upload phonebook
                           <input
                             type="file"
@@ -1610,6 +1619,11 @@ export default function Dashboard() {
                           />
                         </label>
                       </div>
+                      {dialerCallStatus && (
+                        <span className={`text-2xs block text-center ${dialerCallStatus.startsWith("Error") ? "text-bad" : "text-muted"}`}>
+                          {dialerCallStatus}
+                        </span>
+                      )}
                       {phonebookEntries.length > 0 && (
                         <div className="phonebook-list">
                           <div className="phonebook-header text-2xs text-faint">{phonebookEntries.length} contacts</div>

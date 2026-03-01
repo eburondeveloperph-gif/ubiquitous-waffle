@@ -1,5 +1,4 @@
-// Server-side only: use VAPI Private API Key for fetching/creating assistants.
-// Do not use the public key here (that goes in NEXT_PUBLIC_ORBIT_TOKEN for the client SDK).
+// Server-side only: use private API key for fetching/creating assistants.
 const SECRET =
   process.env.VAPI_PRIVATE_API_KEY ||
   process.env.ORBIT_SECRET ||
@@ -14,7 +13,7 @@ export async function orbitCoreRequest(method: string, endpoint: string, payload
   const orbitSecret = getOrbitSecret();
   if (!orbitSecret) {
     throw new Error(
-      'Missing VAPI private API key. Set VAPI_PRIVATE_API_KEY or ORBIT_SECRET in .env.local (server-side only).'
+      'Missing agents API key. Set ORBIT_SECRET in .env.local (server-side only).'
     );
   }
 
@@ -23,6 +22,7 @@ export async function orbitCoreRequest(method: string, endpoint: string, payload
     headers: {
       'Authorization': `Bearer ${orbitSecret}`,
     },
+    ...(method === 'GET' && { cache: 'no-store' as RequestCache }),
   };
 
   if (payload) {
@@ -60,17 +60,63 @@ export async function createAgent(payload: unknown) {
   return orbitCoreRequest('POST', '/assistant', payload);
 }
 
+/** Assistant from VAPI (for get/update) */
+export type VapiAssistant = {
+  id: string;
+  name?: string;
+  firstMessage?: string;
+  model?: { messages?: { role?: string; content?: string }[] };
+  voice?: { provider?: string; voiceId?: string };
+  transcriber?: { language?: string };
+  [key: string]: unknown;
+};
+
+export async function fetchAssistantById(id: string) {
+  if (!getOrbitSecret()) return null;
+  return orbitCoreRequest('GET', `/assistant/${id}`) as Promise<VapiAssistant>;
+}
+
+export async function updateAssistant(id: string, payload: Partial<{
+  name: string;
+  firstMessage: string;
+  model: { messages: { role: string; content: string }[] };
+  voice: { provider: string; voiceId: string };
+  transcriber: { language: string };
+}>) {
+  return orbitCoreRequest('PATCH', `/assistant/${id}`, payload) as Promise<VapiAssistant>;
+}
+
 /**
  * Create a new assistant from scratch (full CreateAssistantDTO).
  * Used when user provides name, firstMessage, model.messages (system prompt), etc.
+ * voice: { provider: 'vapi'|'11labs', voiceId: string }
  */
+/** Valid Deepgram nova-2 transcriber language codes. Maps form values to valid API values. */
+export const NOVA2_LANGUAGES = new Set([
+  'en', 'bg', 'ca', 'zh', 'zh-CN', 'zh-HK', 'zh-Hans', 'zh-TW', 'zh-Hant', 'cs', 'da', 'da-DK',
+  'nl', 'en-US', 'en-AU', 'en-GB', 'en-NZ', 'en-IN', 'et', 'fi', 'nl-BE', 'fr', 'fr-CA', 'de',
+  'de-CH', 'el', 'hi', 'hu', 'id', 'it', 'ja', 'ko', 'ko-KR', 'lv', 'lt', 'ms', 'multi', 'no',
+  'pl', 'pt', 'pt-BR', 'ro', 'ru', 'sk', 'es', 'es-419', 'sv', 'sv-SE', 'th', 'th-TH', 'tr', 'uk', 'vi',
+]);
+
+export function toNova2Language(lang: string | undefined): string {
+  if (!lang) return 'en';
+  if (lang === 'multilingual') return 'multi';
+  if (NOVA2_LANGUAGES.has(lang)) return lang;
+  return 'multi'; // fallback for unsupported (ar, fil, he, etc.)
+}
+
 export async function createAssistantFromScratch(params: {
   name: string;
   firstMessage: string;
   systemPrompt: string;
   language?: string;
+  voice?: { provider: 'vapi' | '11labs'; voiceId: string };
 }) {
-  const { name, firstMessage, systemPrompt, language } = params;
+  const { name, firstMessage, systemPrompt, language, voice } = params;
+  const voiceConfig = voice?.provider && voice?.voiceId
+    ? { provider: voice.provider as 'vapi' | '11labs', voiceId: voice.voiceId }
+    : { provider: '11labs' as const, voiceId: 'EXAVITQu4vr4xnSDxMaL' };
   const payload = {
     name,
     firstMessage: firstMessage || undefined,
@@ -82,31 +128,27 @@ export async function createAssistantFromScratch(params: {
         { role: 'system' as const, content: systemPrompt || 'You are a helpful AI assistant.' },
       ],
     },
-    voice: {
-      provider: '11labs' as const,
-      voiceId: 'EXAVITQu4vr4xnSDxMaL', // Sarah - default ElevenLabs voice
-    },
+    voice: voiceConfig,
     transcriber: {
       provider: 'deepgram' as const,
       model: 'nova-2',
-      language: language === 'multilingual' ? 'multi' : (language || 'en'),
+      language: toNova2Language(language),
     },
   };
   return orbitCoreRequest('POST', '/assistant', payload);
 }
 
 /**
- * Create an outbound phone call via VAPI (VAPI calls the customer's number).
- * Requires VAPI_PHONE_NUMBER_ID in .env (phone number to call FROM).
+ * Create an outbound phone call. Requires PHONE_NUMBER_ID in .env.
  */
 export async function createOutboundCall(params: {
   assistantId: string;
   customerNumber: string;
 }) {
-  const phoneNumberId = (process.env.VAPI_PHONE_NUMBER_ID || '').trim();
+  const phoneNumberId = (process.env.PHONE_NUMBER_ID || process.env.VAPI_PHONE_NUMBER_ID || '').trim();
   if (!phoneNumberId) {
     throw new Error(
-      'Missing VAPI_PHONE_NUMBER_ID. Add a VAPI phone number ID from dashboard.vapi.ai to .env.local for outbound calls.'
+      'Missing PHONE_NUMBER_ID. Add a phone number ID to .env.local for outbound calls.'
     );
   }
   const e164 = params.customerNumber.startsWith('+')
@@ -120,4 +162,42 @@ export async function createOutboundCall(params: {
     customer: { number: e164 },
   };
   return orbitCoreRequest('POST', '/call', payload);
+}
+
+/** Call record from VAPI list endpoint */
+export type VapiCallRecord = {
+  id: string;
+  type?: 'inboundPhoneCall' | 'outboundPhoneCall' | 'webCall' | 'vapi.websocketCall';
+  status?: string;
+  customer?: { number?: string };
+  assistantId?: string;
+  createdAt?: string;
+  endedAt?: string;
+  [key: string]: unknown;
+};
+
+/**
+ * List recent calls from VAPI.
+ */
+export async function fetchCalls(params?: { limit?: number; assistantId?: string }) {
+  if (!getOrbitSecret()) return [];
+  const limit = params?.limit ?? 20;
+  const assistantId = params?.assistantId;
+  const qs = new URLSearchParams();
+  qs.set('limit', String(limit));
+  if (assistantId) qs.set('assistantId', assistantId);
+  const raw = await orbitCoreRequest('GET', `/call?${qs.toString()}`);
+  if (Array.isArray(raw)) return raw as VapiCallRecord[];
+  if (raw && typeof raw === 'object' && Array.isArray((raw as { calls?: unknown[] }).calls)) {
+    return (raw as { calls: VapiCallRecord[] }).calls;
+  }
+  return [];
+}
+
+/**
+ * Fetch a single call by ID (includes artifact with recordingUrl if recording was enabled).
+ */
+export async function fetchCallById(id: string) {
+  if (!getOrbitSecret()) return null;
+  return orbitCoreRequest('GET', `/call/${id}`) as Promise<VapiCallRecord & { artifact?: { recordingUrl?: string; stereoRecordingUrl?: string } }>;
 }

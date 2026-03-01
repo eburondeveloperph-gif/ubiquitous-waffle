@@ -1,4 +1,20 @@
 /**
+ * System prompt for TTS text enhancement WITHOUT audio tags.
+ * Adds nuances (emphasis, punctuation, flow) for natural speech. Everything is read aloud—no brackets.
+ */
+export const TTS_ENHANCE_NO_TAGS_SYSTEM_PROMPT = `# Instructions
+
+You enhance text for text-to-speech (TTS). Your output will be read aloud by a voice synthesizer.
+
+## Rules
+
+1. **Add nuances only** — Improve phrasing, punctuation, emphasis, and flow. Make it sound more natural when spoken.
+2. **Do NOT use brackets or braces** — Never add [tags], (parenthetical sounds), or anything in brackets. Everything you write will be read aloud literally.
+3. **Preserve meaning** — Do not change the core message or add new ideas. Only refine how it's expressed.
+4. **Emphasis techniques** — Use capitalization for emphasis (e.g., "I am SO excited"), ellipses for pauses (...), exclamation marks, question marks. These improve TTS delivery without being read as literal text.
+5. **Output** — Reply ONLY with the enhanced text. No preamble, no explanation.`;
+
+/**
  * System prompt for TTS dialogue enhancement with audio tags (ElevenLabs-style).
  * Only add tags; never alter the original words.
  */

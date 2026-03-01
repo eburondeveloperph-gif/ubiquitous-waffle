@@ -1,11 +1,11 @@
 // cspell:ignore elevenlabs
-const PROVIDER_KEY = process.env.ECHO_PROVIDER_KEY || process.env.ELEVENLABS_API_KEY;
+const PROVIDER_KEY = process.env.TTS_PROVIDER_KEY || process.env.ECHO_PROVIDER_KEY || process.env.ELEVENLABS_API_KEY;
 const PROVIDER_BASE_URL = process.env.ECHO_PROVIDER_BASE_URL || 'https://api.elevenlabs.io/v1';
 
 function getProviderKey() {
   if (!PROVIDER_KEY) {
     throw new Error(
-      'Missing Echo provider API key. Set ECHO_PROVIDER_KEY or ELEVENLABS_API_KEY in .env.local'
+      'Missing TTS provider API key. Set TTS_PROVIDER_KEY in .env.local'
     );
   }
   return PROVIDER_KEY;
@@ -26,8 +26,8 @@ export async function echoProviderRequest(endpoint: string, options: RequestInit
   if (!res.ok) {
     let errorText = await res.text();
     // Stealth mode: sanitize any provider references in error messages
-    errorText = errorText.replace(/elevenlabs|11labs/gi, 'Echo Engine');
-    throw new Error(errorText || "Echo Engine Request failed");
+    errorText = errorText.replace(/elevenlabs|11labs/gi, 'Eburon AI');
+    throw new Error(errorText || "Request failed");
   }
 
   return res;

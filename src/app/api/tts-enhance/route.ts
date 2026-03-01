@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { TTS_AUDIO_TAGS_SYSTEM_PROMPT } from '@/lib/tts-audio-tags-prompt';
+import { TTS_AUDIO_TAGS_SYSTEM_PROMPT, TTS_ENHANCE_NO_TAGS_SYSTEM_PROMPT } from '@/lib/tts-audio-tags-prompt';
 
 const OLLAMA_BASE = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
@@ -8,10 +8,12 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 export async function POST(req: Request) {
   try {
-    const { text } = await req.json();
+    const { text, mode } = await req.json();
     if (typeof text !== 'string' || !text.trim()) {
       return NextResponse.json({ error: 'Missing or invalid text' }, { status: 400 });
     }
+    const useNoTags = mode === 'enhance';
+    const systemPrompt = useNoTags ? TTS_ENHANCE_NO_TAGS_SYSTEM_PROMPT : TTS_AUDIO_TAGS_SYSTEM_PROMPT;
 
     let enhanced: string;
 
@@ -25,7 +27,7 @@ export async function POST(req: Request) {
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           messages: [
-            { role: 'system', content: TTS_AUDIO_TAGS_SYSTEM_PROMPT },
+            { role: 'system', content: systemPrompt },
             { role: 'user', content: text },
           ],
           temperature: 0.3,
@@ -51,7 +53,7 @@ export async function POST(req: Request) {
           body: JSON.stringify({
             model: OLLAMA_MODEL,
             messages: [
-              { role: 'system', content: TTS_AUDIO_TAGS_SYSTEM_PROMPT },
+              { role: 'system', content: systemPrompt },
               { role: 'user', content: text },
             ],
             stream: false,

@@ -20,11 +20,15 @@ import {
   Volume2,
   Phone,
   Upload,
-  RefreshCw
+  RefreshCw,
+  ChevronDown,
+  ChevronRight,
+  FileText
 } from "lucide-react";
 
 import OrbitCore from "@vapi-ai/web";
 import { Voice, UserTtsHistoryItem } from "@/lib/services/echo";
+import DocsPane from "@/components/DocsPane";
 import { enhanceTextForTTS, normalizeForTTS, BREAK_TAG } from "@/lib/tts-enhancer";
 import { supabase } from "@/lib/supabase";
 import { User } from "@supabase/supabase-js";
@@ -50,8 +54,10 @@ const DEFAULT_SAMPLE_AGENT = {
   name: "MorganCsr",
 } as const;
 
-// Inbound call number for testing
-const INBOUND_CALL_NUMBER = "+1 (844) 418 2027";
+// Fallback defaults when Ivan not found
+const DEFAULT_AGENT_NAME = "Customer Support Bot";
+const DEFAULT_AGENT_INTRO = "Hi! I'm your assistant. How can I help you today?";
+const DEFAULT_AGENT_SKILLS = "You are a helpful customer support agent. You can answer questions about products, process orders, and handle returns. Be friendly and concise.";
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState("pane-tts");
@@ -59,7 +65,7 @@ export default function Dashboard() {
   const [voices, setVoices] = useState<Voice[]>([]);
   const [selectedVoice, setSelectedVoice] = useState("");
   const [ttsText, setTtsText] = useState(
-    "Okay, you are NOT going to believe this. You know how I've been totally stuck on that short story? Like, staring at the screen for HOURS, just... nothing? [frustrated sigh] I was seriously about to just trash the whole thing. But then! Last night, this one little phrase popped into my head. And it was like... the FLOODGATES opened! [happy gasp] It all just CLICKED. [laughs] I am so incredibly PUMPED. It went from feeling like a chore to feeling like... MAGIC."
+    "Okay, you are NOT going to believe this. You know how I've been totally stuck on that short story? Like, staring at the screen for HOURS, just... nothing? I was seriously about to just trash the whole thing. But then! Last night, this one little phrase popped into my head. And it was like... the FLOODGATES opened! It all just CLICKED. I am so incredibly PUMPED. It went from feeling like a chore to feeling like... MAGIC."
   );
   const [ttsStatus, setTtsStatus] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -88,10 +94,22 @@ export default function Dashboard() {
   const [history, setHistory] = useState<UserTtsHistoryItem[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const historyAudioRef = useRef<HTMLAudioElement>(null);
+  const playHistoryAbortRef = useRef<AbortController | null>(null);
   const [historyAudioUrl, setHistoryAudioUrl] = useState<string | null>(null);
   const [playingHistoryId, setPlayingHistoryId] = useState<string | null>(null);
   const [downloadMenuId, setDownloadMenuId] = useState<string | null>(null);
   const downloadMenuRef = useRef<HTMLDivElement>(null);
+  const [docsCopyFeedback, setDocsCopyFeedback] = useState("");
+  const [apiBaseUrl, setApiBaseUrl] = useState("https://your-domain.com/api/v1");
+
+  const [callLogFilterType, setCallLogFilterType] = useState<string>("all");
+  const [callLogFilterAssistant, setCallLogFilterAssistant] = useState<string>("");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setApiBaseUrl(`${window.location.origin}/api/v1`);
+    }
+  }, []);
 
   useEffect(() => {
     if (!downloadMenuId) return;
@@ -104,12 +122,22 @@ export default function Dashboard() {
     return () => document.removeEventListener("click", handler);
   }, [downloadMenuId]);
 
+  // Play history audio after React has updated the DOM (avoids AbortError from src update during play)
+  useEffect(() => {
+    if (!historyAudioUrl || !playingHistoryId || !historyAudioRef.current) return;
+    const el = historyAudioRef.current;
+    el.pause();
+    el.play().catch(() => {});
+  }, [historyAudioUrl, playingHistoryId]);
+
   const [models, setModels] = useState<{ model_id: string; name: string; languages: { language_id: string; name: string }[] }[]>([]);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("echo-theme") as "dark" | "light" || "dark";
     setTheme(savedTheme);
-    document.body.classList.toggle("light-mode", savedTheme === "light");
+    const isLight = savedTheme === "light";
+    document.documentElement.classList.toggle("light-mode", isLight);
+    document.body.classList.toggle("light-mode", isLight);
 
     if (!orbit) return;
 
@@ -221,7 +249,9 @@ export default function Dashboard() {
     const newTheme = theme === "dark" ? "light" : "dark";
     setTheme(newTheme);
     localStorage.setItem("echo-theme", newTheme);
-    document.body.classList.toggle("light-mode", newTheme === "light");
+    const isLight = newTheme === "light";
+    document.documentElement.classList.toggle("light-mode", isLight);
+    document.body.classList.toggle("light-mode", isLight);
   };
 
   const fetchRealTimeHistory = useCallback(async () => {
@@ -261,6 +291,30 @@ export default function Dashboard() {
     }
   }, [activeTab, user, fetchRealTimeHistory]);
 
+  const fetchCallLogs = useCallback(async () => {
+    setIsCallLogsLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: "100" });
+      if (callLogFilterAssistant) params.set("assistantId", callLogFilterAssistant);
+      const res = await fetch(`/api/orbit/calls?${params}`, { cache: "no-store" });
+      const data = await res.json();
+      if (Array.isArray(data)) setCallLogs(data);
+      else setCallLogs([]);
+    } catch {
+      setCallLogs([]);
+    } finally {
+      setIsCallLogsLoading(false);
+    }
+  }, [callLogFilterAssistant]);
+
+  useEffect(() => {
+    if (activeTab === "pane-agents") fetchCallLogs();
+  }, [activeTab, fetchCallLogs]);
+
+  useEffect(() => {
+    if (activeTab === "pane-call-logs") fetchCallLogs();
+  }, [activeTab, callLogFilterAssistant, fetchCallLogs]);
+
   const handleToggleCall = async (assistantId: string) => {
     if (callStatus === "active") {
       orbit?.stop();
@@ -283,12 +337,14 @@ export default function Dashboard() {
   };
 
   const navItems = [
-    { id: "pane-tts", label: "Text to Speech", icon: <AudioWaveform size={18} />, desc: "Generate lifelike speech using Echo Engine" },
+    { id: "pane-tts", label: "Text to Speech", icon: <AudioWaveform size={18} />, desc: "Generate lifelike speech" },
     { id: "pane-stt", label: "Speech To Text", icon: <Mic size={18} />, desc: "Transcribe audio to text effortlessly" },
     { id: "pane-clone", label: "Voice Cloning", icon: <Copy size={18} />, desc: "Instantly clone voices with full metadata tagging" },
-    { id: "pane-agents", label: "Conversational", icon: <Users size={18} />, desc: "Create and connect to Interactive AI Agents via Orbit" },
+    { id: "pane-agents", label: "Conversational", icon: <Users size={18} />, desc: "Create and connect to AI agents" },
+    { id: "pane-call-logs", label: "Call Logs", icon: <Phone size={18} />, desc: "All call history" },
     { id: "pane-history", label: "History", icon: <History size={18} />, desc: "View and play past synthesized audio" },
-    { id: "pane-voices", label: "Voices", icon: <BookOpen size={18} />, desc: "Manage your EchoLabs voice library" },
+    { id: "pane-voices", label: "Voices", icon: <BookOpen size={18} />, desc: "Manage your voice library" },
+    { id: "pane-docs", label: "Docs", icon: <FileText size={18} />, desc: "API documentation and test inbound" },
     { id: "pane-settings", label: "Settings", icon: <SettingsIcon size={18} />, desc: "Configure default Echo models and format" },
   ];
 
@@ -350,7 +406,7 @@ export default function Dashboard() {
       const res = await fetch("/api/tts-enhance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: ttsText }),
+        body: JSON.stringify({ text: ttsText, mode: "expression" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Enhance failed");
@@ -358,7 +414,29 @@ export default function Dashboard() {
       setTtsStatus("Expression added.");
     } catch (err) {
       console.error(err);
-      setTtsStatus("Error: " + (err instanceof Error ? err.message : "Could not add expression. Is Ollama running or OPENAI_API_KEY set?"));
+      setTtsStatus("Error: " + (err instanceof Error ? err.message : "Could not add expression."));
+    } finally {
+      setIsEnhancingExpression(false);
+    }
+  };
+
+  const handleEnhanced = async () => {
+    if (!ttsText.trim()) return;
+    setIsEnhancingExpression(true);
+    setTtsStatus("");
+    try {
+      const res = await fetch("/api/tts-enhance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: ttsText, mode: "enhance" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Enhance failed");
+      if (typeof data.enhanced === "string") setTtsText(data.enhanced);
+      setTtsStatus("Enhanced.");
+    } catch (err) {
+      console.error(err);
+      setTtsStatus("Error: " + (err instanceof Error ? err.message : "Could not enhance."));
     } finally {
       setIsEnhancingExpression(false);
     }
@@ -515,6 +593,9 @@ export default function Dashboard() {
 
   const handlePlayHistory = async (id: string) => {
     if (currentAudio) currentAudio.pause();
+    playHistoryAbortRef.current?.abort();
+    playHistoryAbortRef.current = new AbortController();
+    const signal = playHistoryAbortRef.current.signal;
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) {
       setTtsStatus("Sign in to play history.");
@@ -524,6 +605,7 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/tts-history/${id}/audio`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
+        signal,
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
@@ -531,17 +613,14 @@ export default function Dashboard() {
         throw new Error(`${msg} (${res.status})`);
       }
       const blob = await res.blob();
+      if (signal.aborted) return;
       if (historyAudioUrl) URL.revokeObjectURL(historyAudioUrl);
       const url = URL.createObjectURL(blob);
       setHistoryAudioUrl(url);
       setPlayingHistoryId(id);
-      const el = historyAudioRef.current;
-      if (el) {
-        el.src = url;
-        el.play();
-      }
       setTtsStatus("Playing");
     } catch (err) {
+      if ((err as Error).name === "AbortError") return;
       console.error(err);
       setTtsStatus("Error playing history");
     }
@@ -568,7 +647,7 @@ export default function Dashboard() {
       const ext = format === "wav" ? "wav" : "mp3";
       const a = document.createElement("a");
       a.href = url;
-      a.download = `EchoLabs_${text.substring(0, 20).replace(/[^a-z0-9]/gi, "_")}.${ext}`;
+      a.download = `EburonAI_${text.substring(0, 20).replace(/[^a-z0-9]/gi, "_")}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -583,21 +662,110 @@ export default function Dashboard() {
   const [agentBases, setAgentBases] = useState<{ id: string; name?: string }[]>([]);
   const [agentBasesError, setAgentBasesError] = useState<string | null>(null);
   const [isFetchingBases, setIsFetchingBases] = useState(false);
-  const [newAgentName, setNewAgentName] = useState("");
+  const [userAssistantId, setUserAssistantId] = useState<string | null>(null);
+  const [newAgentName, setNewAgentName] = useState(DEFAULT_AGENT_NAME);
   const [agentStatus, setAgentStatus] = useState("");
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
 
   // Create-from-scratch form (beside iPhone dialer)
   const [agentLanguage, setAgentLanguage] = useState("en");
-  const [agentIntroSpiel, setAgentIntroSpiel] = useState("");
-  const [agentSkillsPrompt, setAgentSkillsPrompt] = useState("");
+  const [agentVoice, setAgentVoice] = useState("vapi:elliot");
+  const [agentIntroSpiel, setAgentIntroSpiel] = useState(DEFAULT_AGENT_INTRO);
+  const [agentSkillsPrompt, setAgentSkillsPrompt] = useState(DEFAULT_AGENT_SKILLS);
   const [dialerNumber, setDialerNumber] = useState("");
   const [phonebookEntries, setPhonebookEntries] = useState<{ name: string; number: string }[]>([]);
   const [selectedDialerAgentId, setSelectedDialerAgentId] = useState("");
   const [dialerCallStatus, setDialerCallStatus] = useState("");
   const [isDialerCalling, setIsDialerCalling] = useState(false);
+  const [callLogs, setCallLogs] = useState<{ id: string; type?: string; status?: string; customer?: { number?: string }; assistantId?: string; createdAt?: string }[]>([]);
+  const [isCallLogsLoading, setIsCallLogsLoading] = useState(false);
+  const [playingCallLogId, setPlayingCallLogId] = useState<string | null>(null);
+  const [callLogRecordingUrl, setCallLogRecordingUrl] = useState<string | null>(null);
+  const [callLogPlaybackError, setCallLogPlaybackError] = useState<string | null>(null);
+  const [expandedCallLogId, setExpandedCallLogId] = useState<string | null>(null);
+  const [expandedCallTranscript, setExpandedCallTranscript] = useState<string | null>(null);
+  const [isExpandedCallLoading, setIsExpandedCallLoading] = useState(false);
+  const callLogAudioRef = useRef<HTMLAudioElement>(null);
   const longPress0Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPress0HandledRef = useRef(false);
+
+  const handlePlayCallLog = useCallback(async (callId: string) => {
+    setCallLogPlaybackError(null);
+    if (playingCallLogId === callId) {
+      callLogAudioRef.current?.pause();
+      setPlayingCallLogId(null);
+      setCallLogRecordingUrl(null);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/orbit/calls/${callId}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to fetch call");
+      const url = data?.artifact?.recordingUrl || data?.artifact?.stereoRecordingUrl;
+      if (!url) {
+        setCallLogPlaybackError("No recording available for this call.");
+        return;
+      }
+      setCallLogRecordingUrl(url);
+      setPlayingCallLogId(callId);
+    } catch (err) {
+      setCallLogPlaybackError(err instanceof Error ? err.message : "Could not load recording");
+    }
+  }, [playingCallLogId]);
+
+  useEffect(() => {
+    if (callLogRecordingUrl && callLogAudioRef.current) {
+      callLogAudioRef.current.src = callLogRecordingUrl;
+      callLogAudioRef.current.play().catch(() => {});
+    }
+  }, [callLogRecordingUrl]);
+
+  const handleExpandCallLog = useCallback(async (callId: string) => {
+    if (expandedCallLogId === callId) {
+      setExpandedCallLogId(null);
+      setExpandedCallTranscript(null);
+      return;
+    }
+    setExpandedCallLogId(callId);
+    setExpandedCallTranscript(null);
+    setIsExpandedCallLoading(true);
+    try {
+      const res = await fetch(`/api/orbit/calls/${callId}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to fetch call");
+      const transcript = formatCallTranscript(data);
+      setExpandedCallTranscript(transcript);
+    } catch {
+      setExpandedCallTranscript("(Could not load transcript)");
+    } finally {
+      setIsExpandedCallLoading(false);
+    }
+  }, [expandedCallLogId]);
+
+  const formatCallTranscript = (call: { transcript?: unknown; messages?: unknown[] }) => {
+    if (call.transcript && typeof call.transcript === "string") return call.transcript;
+    const messages = call.messages ?? call.transcript;
+    if (Array.isArray(messages)) {
+      return messages
+        .filter((m: { transcript?: string }) => m.transcript)
+        .map((m: { role?: string; message?: string; content?: string; transcript?: string }) => {
+          const text = m.message ?? m.content ?? m.transcript ?? "";
+          const role = m.role ?? "unknown";
+          const label = role === "user" ? "Customer" : role === "assistant" ? "Agent" : role;
+          return `${label}: ${text}`;
+        })
+        .filter(Boolean)
+        .join("\n");
+    }
+    return "(No transcript available)";
+  };
+
+  const getCallFromTo = (c: { type?: string; customer?: { number?: string } }) => {
+    const num = c.customer?.number ?? "—";
+    if (c.type === "inboundPhoneCall") return { from: num, to: "Our line" };
+    if (c.type === "outboundPhoneCall") return { from: "Our line", to: num };
+    return { from: "—", to: num || "—" };
+  };
 
   const handleDialKeyDown = (digit: string) => {
     if (digit !== "0") {
@@ -639,7 +807,7 @@ export default function Dashboard() {
       setAgentBases(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Failed to fetch bases:", error);
-      setAgentBasesError("Could not load agents. Check your private API key (VAPI_PRIVATE_API_KEY).");
+      setAgentBasesError("Could not load agents. Check your API key.");
       setAgentBases([]);
     } finally {
       setIsFetchingBases(false);
@@ -647,10 +815,62 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    if (activeTab === "pane-agents") {
+    if (activeTab === "pane-agents" || activeTab === "pane-call-logs") {
       fetchAgentBases();
     }
   }, [activeTab]);
+
+  // Load agent form defaults: Ivan from VAPI, or user's assistant
+  const loadAgentFormDefaults = useCallback(async () => {
+    if (!user) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const [userRes, assistantsRes] = await Promise.all([
+        fetch("/api/user-assistant", {
+          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+        }),
+        fetch("/api/orbit/assistants", { cache: "no-store" }),
+      ]);
+      const userData = await userRes.json();
+      const assistantsRaw = await assistantsRes.json();
+      const assistants = Array.isArray(assistantsRaw) ? assistantsRaw : [];
+      const myAssistantId = userData?.assistantId ?? null;
+      setUserAssistantId(myAssistantId);
+
+      const ivanId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_IVAN_ID;
+      const ivan = ivanId
+        ? assistants.find((a: { id?: string }) => a.id === ivanId)
+        : assistants.find((a: { name?: string }) => /ivan/i.test(a.name || ""));
+      const defaultAssistant = myAssistantId
+        ? assistants.find((a: { id?: string }) => a.id === myAssistantId) ?? ivan
+        : ivan;
+
+      if (defaultAssistant?.id) {
+        const detailRes = await fetch(`/api/orbit/assistants/${defaultAssistant.id}`, { cache: "no-store" });
+        const detail = await detailRes.json();
+        if (detail?.id) {
+          const sysMsg = detail.model?.messages?.find((m: { role?: string }) => m.role === "system");
+          setNewAgentName(detail.name || DEFAULT_AGENT_NAME);
+          setAgentIntroSpiel(detail.firstMessage || DEFAULT_AGENT_INTRO);
+          setAgentSkillsPrompt(sysMsg?.content || DEFAULT_AGENT_SKILLS);
+          const lang = detail.transcriber?.language;
+          setAgentLanguage(lang === "multi" ? "multilingual" : lang || "en");
+          const v = detail.voice;
+          if (v?.provider && v?.voiceId) {
+            setAgentVoice(`${v.provider}:${v.voiceId}`);
+          }
+        }
+      }
+    } catch {
+      // Keep current defaults
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (activeTab === "pane-agents" && user) {
+      loadAgentFormDefaults();
+    }
+  }, [activeTab, user, loadAgentFormDefaults]);
 
   // Always include default sample agent first, then fetched agents (no duplicate id)
   const displayAgents = useMemo(() => {
@@ -668,37 +888,67 @@ export default function Dashboard() {
 
   const [showUserProfile, setShowUserProfile] = useState(false);
 
+  const handleEditAgain = useCallback(() => {
+    setAgentStatus("");
+    loadAgentFormDefaults();
+  }, [loadAgentFormDefaults]);
+
   const handleCreateMyAgent = async () => {
     if (!newAgentName.trim()) {
       setAgentStatus("Agent name is required.");
       return;
     }
+    if (!user) {
+      setAgentStatus("Sign in to create or update your agent.");
+      return;
+    }
     setIsCreatingAgent(true);
-    setAgentStatus("Creating agent in VAPI...");
+    const isUpdate = !!userAssistantId;
+    setAgentStatus(isUpdate ? "Updating agent..." : "Creating agent...");
     try {
+      const voiceParts = agentVoice.split(":");
+      const voice = voiceParts.length >= 2
+        ? { provider: voiceParts[0] as "vapi" | "11labs", voiceId: voiceParts.slice(1).join(":") }
+        : undefined;
+      const body: Record<string, unknown> = {
+        name: newAgentName.trim(),
+        firstMessage: agentIntroSpiel.trim() || undefined,
+        systemPrompt: agentSkillsPrompt.trim() || "You are a helpful AI assistant.",
+        language: agentLanguage,
+        voice,
+      };
+      if (isUpdate) body.assistantId = userAssistantId;
       const res = await fetch("/api/orbit/agents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: newAgentName.trim(),
-          firstMessage: agentIntroSpiel.trim() || undefined,
-          systemPrompt: agentSkillsPrompt.trim() || "You are a helpful AI assistant.",
-          language: agentLanguage,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Agent creation failed");
-      setAgentStatus("Agent created! Loading into dialer.");
-      setSelectedDialerAgentId(data.id);
+      if (!res.ok) throw new Error(data?.error || (isUpdate ? "Agent update failed" : "Agent creation failed"));
+      const assistantId = data.id;
+      setAgentStatus(isUpdate ? "Agent updated! Loading into dialer." : "Agent created! Loading into dialer.");
+      setSelectedDialerAgentId(assistantId);
+      setUserAssistantId(assistantId);
       setAgentBases((prev) => {
-        const exists = prev.some((a) => a.id === data.id);
-        if (exists) return prev;
-        return [...prev, { id: data.id, name: data.name || newAgentName }];
+        const exists = prev.some((a) => a.id === assistantId);
+        if (exists) return prev.map((a) => a.id === assistantId ? { ...a, name: data.name || newAgentName } : a);
+        return [...prev, { id: assistantId, name: data.name || newAgentName }];
       });
+      if (!isUpdate) {
+        const { data: { session } } = await supabase.auth.getSession();
+        await fetch("/api/user-assistant", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
+          body: JSON.stringify({ assistantId }),
+        });
+      }
       fetchAgentBases();
     } catch (error) {
       console.error(error);
-      setAgentStatus("Error: " + (error instanceof Error ? error.message : "Creation failed."));
+      setAgentStatus("Error: " + (error instanceof Error ? error.message : (isUpdate ? "Update failed." : "Creation failed.")));
     } finally {
       setIsCreatingAgent(false);
     }
@@ -747,7 +997,7 @@ export default function Dashboard() {
               alt="Eburon"
               className="mx-auto mb-4 rounded-xl logo-img-lg"
             />
-            <h1>EchoLabs</h1>
+            <h1>Eburon AI</h1>
             <p className="text-2xs text-faint uppercase tracking-widest">Premium Voice Synthesis</p>
           </div>
 
@@ -848,8 +1098,7 @@ export default function Dashboard() {
               className="rounded-xl logo-img"
             />
             <div>
-              <div className="brand-name">EchoLabs</div>
-              <div className="brand-sub">From Eburon AI</div>
+              <div className="brand-name">Eburon AI</div>
             </div>
           </div>
 
@@ -875,7 +1124,7 @@ export default function Dashboard() {
                 {user.email?.charAt(0).toUpperCase()}
               </div>
               <div className="profile-details">
-                <div className="profile-name truncate w-32 text-sm font-medium">{user.email}</div>
+                <div className="profile-name text-sm font-medium">{user.email}</div>
                 <div className="profile-tier text-xs text-gray-400">Click for options</div>
               </div>
               <div className={`profile-chevron transition-transform ${showUserProfile ? 'rotate-180' : ''}`}>
@@ -900,7 +1149,7 @@ export default function Dashboard() {
             <div className="api-badge flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="status-dot ok"></div>
-                <span>API Active</span>
+                <span>Connected</span>
               </div>
               <button
                 className="btn icon-only scale-90"
@@ -921,8 +1170,8 @@ export default function Dashboard() {
             <h1>{activeItem?.label}</h1>
             <small>{activeItem?.desc}</small>
           </div>
-          <button className="btn" onClick={() => setIsModalOpen(true)} title="Configure API Key">
-            <Key size={14} className="mr-2" /> <span className="text-lime">Keys Configured</span>
+          <button className="btn" onClick={() => setIsModalOpen(true)} title="Configuration">
+            <Key size={14} className="mr-2" /> <span className="text-lime">Configured</span>
           </button>
         </div>
 
@@ -964,7 +1213,7 @@ export default function Dashboard() {
                       type="button"
                       className="btn text-2xs text-lime border border-lime/50"
                       onClick={() => setTtsText(normalizeForTTS(ttsText))}
-                      title="Full normalization: numbers, currency, phone, abbreviations (ElevenLabs best practices)"
+                      title="Normalize numbers, currency, phone, abbreviations for speech"
                     >
                       Normalize for TTS
                     </button>
@@ -978,18 +1227,27 @@ export default function Dashboard() {
                     </button>
                     <button
                       type="button"
+                      className="btn text-2xs"
+                      onClick={handleEnhanced}
+                      disabled={isEnhancingExpression || !ttsText.trim()}
+                      title="Add nuances for natural speech (no brackets)"
+                    >
+                      {isEnhancingExpression ? <Loader2 size={12} className="animate-spin" /> : "Enhanced"}
+                    </button>
+                    <button
+                      type="button"
                       className="btn text-2xs text-lime border border-lime/50"
                       onClick={handleAddExpression}
                       disabled={isEnhancingExpression || !ttsText.trim()}
-                      title="Use AI to add [laughing], [sighs], etc. (Ollama or OpenAI)"
+                      title="Use AI to add expressive tags"
                     >
-                      {isEnhancingExpression ? <Loader2 size={12} className="animate-spin" /> : "Add expression"}
+                      Add expression
                     </button>
                   </div>
                 </div>
                 <textarea
                   id="ttsText"
-                  placeholder="Write natural speech. Use square brackets for expressions only: [sighs], [laughs], [happy gasp], [whispers]. No curly braces. Add pause inserts [pause]."
+                  placeholder="Write natural speech. Add pause with [pause]."
                   value={ttsText}
                   onChange={(e) => setTtsText(e.target.value)}
                 ></textarea>
@@ -1177,7 +1435,7 @@ export default function Dashboard() {
                     onChange={(e) => setCloneConsent(e.target.checked)}
                   />
                   <label htmlFor="cloneConsent" className="text-2xs text-faint leading-relaxed cursor-pointer select-none">
-                    I hereby confirm that I have all necessary rights or consents to upload and clone these voice samples and that I will not use the platform-generated content for any illegal, fraudulent, or harmful purpose. I reaffirm my obligation to abide by EchoLabs’ Terms of Service, Prohibited Content and Uses Policy and Privacy Policy.
+                    I hereby confirm that I have all necessary rights or consents to upload and clone these voice samples and that I will not use the platform-generated content for any illegal, fraudulent, or harmful purpose. I reaffirm my obligation to abide by Eburon AI Terms of Service and Privacy Policy.
                   </label>
                 </div>
               </div>
@@ -1201,7 +1459,7 @@ export default function Dashboard() {
           {activeTab === "pane-agents" && (
             <div className="tab-pane active">
               <div className="flex justify-between items-center mb-4">
-                <label className="block">Orbit agents</label>
+                <label className="block">Agents</label>
                 <button
                   type="button"
                   className="btn icon-only"
@@ -1210,6 +1468,29 @@ export default function Dashboard() {
                   title="Refresh agents"
                 >
                   {isFetchingBases ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                </button>
+              </div>
+
+              {/* Phone call / Web call header */}
+              <div className="flex gap-3 mb-6">
+                <div className="flex-1 flex items-center gap-2 px-4 py-3 rounded-xl border border-white/10 bg-white/5">
+                  <Phone size={20} className="text-lime" />
+                  <span className="font-medium">Phone call</span>
+                  <span className="text-2xs text-muted">Use dialer below</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn primary flex-1 flex items-center justify-center gap-2 px-4 py-3"
+                  onClick={() => {
+                    const agentId = selectedDialerAgentId || displayAgents[0]?.id || DEFAULT_SAMPLE_AGENT.id;
+                    setSelectedDialerAgentId(agentId || "");
+                    handleToggleCall(agentId);
+                  }}
+                  disabled={callStatus === "loading"}
+                >
+                  <Volume2 size={20} />
+                  Web call
+                  <span className="text-2xs opacity-80">Orb & live transcription</span>
                 </button>
               </div>
               {agentBasesError && (
@@ -1300,7 +1581,8 @@ export default function Dashboard() {
                               });
                               const data = await res.json();
                               if (!res.ok) throw new Error(data?.error || "Outbound call failed");
-                              setDialerCallStatus("Call initiated. VAPI is calling the number.");
+                              setDialerCallStatus("Call initiated. Calling the number.");
+                              fetchCallLogs();
                             } catch (err) {
                               setDialerCallStatus("Error: " + (err instanceof Error ? err.message : "Call failed"));
                             } finally {
@@ -1362,6 +1644,31 @@ export default function Dashboard() {
                     />
                   </div>
                   <div className="field">
+                    <label>Voice</label>
+                    <select
+                      title="Select voice for agent"
+                      value={agentVoice}
+                      onChange={(e) => setAgentVoice(e.target.value)}
+                      className="w-full"
+                    >
+                      <optgroup label="Built-in voices">
+                        <option value="vapi:elliot">Elliot</option>
+                        <option value="vapi:savannah">Savannah</option>
+                      </optgroup>
+                      <optgroup label="Custom / Cloned">
+                        {voices.length === 0 ? (
+                          <option value="11labs:EXAVITQu4vr4xnSDxMaL" disabled>Loading voices…</option>
+                        ) : (
+                          voices.map((v) => (
+                            <option key={v.voice_id} value={`11labs:${v.voice_id}`}>
+                              {v.name}{v.labels?.cloned === "true" ? " (cloned)" : ""}
+                            </option>
+                          ))
+                        )}
+                      </optgroup>
+                    </select>
+                  </div>
+                  <div className="field">
                     <label>Languages Spoken</label>
                     <select
                       title="Languages spoken by agent"
@@ -1420,23 +1727,27 @@ export default function Dashboard() {
                       rows={4}
                     />
                   </div>
-                  <button
-                    className="btn primary w-full create-my-agent-btn"
-                    onClick={handleCreateMyAgent}
-                    disabled={isCreatingAgent || !newAgentName.trim()}
-                  >
-                    {isCreatingAgent ? <Loader2 size={16} className="animate-spin" /> : <Users size={16} />}
-                    Create My Agent
-                  </button>
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      className="btn primary flex-1 create-my-agent-btn"
+                      onClick={handleCreateMyAgent}
+                      disabled={isCreatingAgent || !newAgentName.trim()}
+                    >
+                      {isCreatingAgent ? <Loader2 size={16} className="animate-spin" /> : <Users size={16} />}
+                      Use this agent
+                    </button>
+                    <button
+                      className="btn"
+                      onClick={handleEditAgain}
+                      disabled={isCreatingAgent}
+                    >
+                      Edit again
+                    </button>
+                  </div>
                   <span className={`text-xs block mt-2 ${agentStatus.startsWith("Error") ? "text-bad" : "text-muted"}`}>
                     {agentStatus}
                   </span>
                 </div>
-              </div>
-
-              <div className="mb-4 mt-6 p-3 rounded border border-white/10 bg-white/5 text-2xs text-muted">
-                <span className="text-faint">Inbound line for testing:</span>{" "}
-                <a href={`tel:${INBOUND_CALL_NUMBER.replace(/\s/g, "")}`} className="text-lime hover:underline">{INBOUND_CALL_NUMBER}</a>
               </div>
 
               <div className="mt-6">
@@ -1468,7 +1779,7 @@ export default function Dashboard() {
                   {displayAgents.length === 0 && !isFetchingBases && !agentBasesError && (
                     <div className="placeholder-pane h-20 text-2xs col-span-2">
                       No agents yet. Create one using the form above or in the&nbsp;
-                      <a href="https://dashboard.vapi.ai" target="_blank" rel="noopener noreferrer" className="text-lime hover:underline">VAPI dashboard</a>.
+                      <a href="https://dashboard.vapi.ai" target="_blank" rel="noopener noreferrer" className="text-lime hover:underline">agent dashboard</a>.
                     </div>
                   )}
                 </div>
@@ -1490,6 +1801,147 @@ export default function Dashboard() {
             </div>
           )}
 
+          {activeTab === "pane-call-logs" && (
+            <div className="tab-pane active">
+              <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
+                <label className="block">Call Logs</label>
+                <div className="flex flex-wrap items-center gap-3">
+                  <select
+                    value={callLogFilterType}
+                    onChange={(e) => setCallLogFilterType(e.target.value)}
+                    className="input text-2xs py-1.5 px-2 rounded border border-border bg-panel"
+                    aria-label="Filter by call type"
+                  >
+                    <option value="all">All types</option>
+                    <option value="inboundPhoneCall">Inbound</option>
+                    <option value="outboundPhoneCall">Outbound</option>
+                    <option value="webCall">Web</option>
+                  </select>
+                  <select
+                    value={callLogFilterAssistant}
+                    onChange={(e) => setCallLogFilterAssistant(e.target.value)}
+                    className="input text-2xs py-1.5 px-2 rounded border border-border bg-panel min-w-[140px]"
+                    aria-label="Filter by agent"
+                  >
+                    <option value="">All agents</option>
+                    {agentBases.map((a) => (
+                      <option key={a.id} value={a.id}>{a.name || a.id}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={fetchCallLogs}
+                    disabled={isCallLogsLoading}
+                  >
+                    {isCallLogsLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                    Refresh
+                  </button>
+                </div>
+              </div>
+              {callLogPlaybackError && (
+                <div className="mb-4 p-3 rounded border border-red-500/50 bg-red-500/10 text-red-200 text-2xs">
+                  {callLogPlaybackError}
+                </div>
+              )}
+              {callLogRecordingUrl && (
+                <div className="mb-4 p-3 rounded border border-border bg-panel flex items-center gap-3">
+                  <audio
+                    ref={callLogAudioRef}
+                    src={callLogRecordingUrl}
+                    controls
+                    className="flex-1 h-8"
+                    onEnded={() => { setPlayingCallLogId(null); setCallLogRecordingUrl(null); }}
+                  />
+                  <span className="text-2xs text-muted">Call playback</span>
+                </div>
+              )}
+              <div className="call-logs-table">
+                {isCallLogsLoading && callLogs.length === 0 ? (
+                  <div className="placeholder-pane h-32 flex items-center justify-center text-muted">
+                    Loading call logs…
+                  </div>
+                ) : (() => {
+                  const filtered = callLogFilterType === "all"
+                    ? callLogs
+                    : callLogs.filter((c) => c.type === callLogFilterType);
+                  return filtered.length === 0 ? (
+                    <div className="placeholder-pane h-32 flex items-center justify-center text-muted">
+                      No calls yet
+                    </div>
+                  ) : (
+                    <div className="call-logs-rows">
+                      <div className="call-log-row call-log-header">
+                        <span className="call-log-expand"></span>
+                        <span>Type</span>
+                        <span>From</span>
+                        <span>To</span>
+                        <span>Date</span>
+                        <span className="call-log-play">Play</span>
+                      </div>
+                      {filtered.map((c) => {
+                        const { from, to } = getCallFromTo(c);
+                        const isExpanded = expandedCallLogId === c.id;
+                        return (
+                          <div key={c.id} className="call-log-row-wrapper">
+                            <div className="call-log-row">
+                              <span className="call-log-expand">
+                                <button
+                                  type="button"
+                                  className="action-btn p-1"
+                                  onClick={() => handleExpandCallLog(c.id)}
+                                  title={isExpanded ? "Collapse transcript" : "Expand transcript"}
+                                  aria-label={isExpanded ? "Collapse" : "Expand"}
+                                >
+                                  {isExpanded ? (
+                                    <ChevronDown size={16} />
+                                  ) : (
+                                    <ChevronRight size={16} />
+                                  )}
+                                </button>
+                              </span>
+                              <span className="call-log-type">
+                                {c.type === "webCall" ? "Web" : c.type === "outboundPhoneCall" ? "Outbound" : c.type === "inboundPhoneCall" ? "Inbound" : c.type ?? "—"}
+                              </span>
+                              <span className="call-log-number">{from}</span>
+                              <span className="call-log-number">{to}</span>
+                              <span className="call-log-date">
+                                {c.createdAt ? new Date(c.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                              </span>
+                              <span className="call-log-play">
+                                <button
+                                  type="button"
+                                  className={`action-btn ${playingCallLogId === c.id ? "text-lime" : ""}`}
+                                  onClick={() => handlePlayCallLog(c.id)}
+                                  title="Play recording"
+                                  aria-label="Play recording"
+                                >
+                                  <Play size={16} fill={playingCallLogId === c.id ? "currentColor" : undefined} />
+                                </button>
+                              </span>
+                            </div>
+                            {isExpanded && (
+                              <div className="call-log-transcript">
+                                {isExpandedCallLoading ? (
+                                  <div className="flex items-center gap-2 text-muted text-2xs">
+                                    <Loader2 size={14} className="animate-spin" />
+                                    Loading transcript…
+                                  </div>
+                                ) : expandedCallTranscript ? (
+                                  <pre className="call-log-transcript-text">{expandedCallTranscript}</pre>
+                                ) : null}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
           {activeTab === "pane-history" && (
             <div className="tab-pane active">
               <div className="flex justify-between items-center mb-4">
@@ -1505,82 +1957,66 @@ export default function Dashboard() {
               ) : (
                 <>
                   {historyAudioUrl && (
-                    <div className="mb-4 p-3 rounded border border-border bg-panel flex items-center gap-3">
+                    <div className="mb-4 p-4 rounded-xl border border-border bg-panel flex items-center gap-4">
                       <audio
                         ref={historyAudioRef}
                         src={historyAudioUrl}
                         controls
-                        className="flex-1 h-8"
+                        className="flex-1 h-10"
                         onEnded={() => { setTtsStatus(""); setPlayingHistoryId(null); }}
                       />
-                      <span className="text-2xs text-muted">Replay</span>
+                      <span className="text-2xs text-muted">Now playing</span>
                     </div>
                   )}
-                  <div className="history-table">
-                  <div className="history-table-header">
-                    <div className="col-text">Text</div>
-                    <div className="col-voice">Voice</div>
-                    <div className="col-date">Date</div>
-                    <div className="col-actions"></div>
-                  </div>
-                  <div className="history-table-body">
+                  <div className="history-list">
                     {isHistoryLoading ? (
-                      <div className="placeholder-pane h-32"><Loader2 className="animate-spin" /></div>
+                      <div className="placeholder-pane h-32 flex items-center justify-center"><Loader2 className="animate-spin" size={24} /></div>
                     ) : history.length === 0 ? (
-                      <div className="placeholder-pane h-32">No TTS history yet. Generate speech to see it here.</div>
+                      <div className="placeholder-pane h-32 flex items-center justify-center text-muted">No TTS history yet. Generate speech to see it here.</div>
                     ) : (
                       history.slice(0, 50).map((h) => (
-                        <div key={h.id} className="history-row group">
-                          <div className="col-text" title={h.text}>
-                            <div className="text-preview">{h.text}</div>
+                        <div key={h.id} className="history-card">
+                          <button
+                            className={`history-play-btn ${playingHistoryId === h.id ? "playing" : ""}`}
+                            onClick={() => handlePlayHistory(h.id)}
+                            title="Play"
+                            aria-label="Play"
+                          >
+                            {playingHistoryId === h.id ? (
+                              <Volume2 size={26} className="text-inherit" />
+                            ) : (
+                              <Play size={26} fill="currentColor" className="text-lime" />
+                            )}
+                          </button>
+                          <div className="history-card-body">
+                            <div className="history-card-text" title={h.text}>{h.text}</div>
+                            <div className="history-card-meta">
+                              <span className="voice-pill">{h.voice_name}</span>
+                              <span className="history-card-date">{new Date(h.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                            </div>
                           </div>
-                          <div className="col-voice">
-                            <span className="voice-pill">{h.voice_name}</span>
-                          </div>
-                          <div className="col-date">
-                            {new Date(h.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                          </div>
-                          <div className="col-actions">
+                          <div className="history-card-actions">
                             <button
-                              className={`action-btn ${playingHistoryId === h.id ? "text-lime" : ""}`}
-                              onClick={() => handlePlayHistory(h.id)}
-                              title="Play"
-                            >
-                              <Play size={16} fill={playingHistoryId === h.id ? "currentColor" : undefined} />
-                            </button>
-                            <button
-                              className="action-btn"
-                              onClick={() => {
-                                setTtsText(h.text);
-                                setSelectedVoice(h.voice_id);
-                                setActiveTab("pane-tts");
-                              }}
+                              className="history-card-action"
+                              onClick={() => { setTtsText(h.text); setSelectedVoice(h.voice_id); setActiveTab("pane-tts"); }}
                               title="Re-synthesize"
                             >
                               <AudioWaveform size={16} />
                             </button>
-                            <div className="relative inline-block" ref={downloadMenuId === h.id ? downloadMenuRef : undefined}>
+                            <div className="relative" ref={downloadMenuId === h.id ? downloadMenuRef : undefined}>
                               <button
-                                className="action-btn"
+                                className="history-card-action"
                                 onClick={(e) => { e.stopPropagation(); setDownloadMenuId(downloadMenuId === h.id ? null : h.id); }}
                                 title="Download"
                               >
                                 <Download size={16} />
                               </button>
                               {downloadMenuId === h.id && (
-                                <div className="absolute right-0 top-full mt-1 z-10 rounded border border-border bg-panel py-1 min-w-[80px] shadow-lg">
-                                  <button
-                                    className="block w-full text-left px-3 py-1.5 text-2xs hover:bg-limeDim"
-                                    onClick={() => { handleDownloadHistory(h.id, h.text, "mp3"); setDownloadMenuId(null); }}
-                                  >
-                                    MP3
-                                  </button>
-                                  <button
-                                    className="block w-full text-left px-3 py-1.5 text-2xs hover:bg-limeDim"
-                                    onClick={() => { handleDownloadHistory(h.id, h.text, "wav"); setDownloadMenuId(null); }}
-                                  >
-                                    WAV
-                                  </button>
+                                <div className="absolute right-0 top-full mt-1 z-20 rounded-lg border border-border bg-panel py-1 min-w-[90px] shadow-xl">
+                                  <button className="block w-full text-left px-4 py-2 text-sm hover:bg-limeDim"
+                                    onClick={() => { handleDownloadHistory(h.id, h.text, "mp3"); setDownloadMenuId(null); }}>MP3</button>
+                                  <button className="block w-full text-left px-4 py-2 text-sm hover:bg-limeDim"
+                                    onClick={() => { handleDownloadHistory(h.id, h.text, "wav"); setDownloadMenuId(null); }}>WAV</button>
                                 </div>
                               )}
                             </div>
@@ -1589,7 +2025,6 @@ export default function Dashboard() {
                       ))
                     )}
                   </div>
-                </div>
                 </>
               )}
             </div>
@@ -1603,7 +2038,7 @@ export default function Dashboard() {
               </div>
               <div className="grid grid-3">
                 {voices.length === 0 ? (
-                  <div className="placeholder-pane h-32 col-span-3">Fetching premium voices...</div>
+                  <div className="placeholder-pane h-32 col-span-3">Loading voices…</div>
                 ) : (
                   voices.map((v) => (
                     <div key={v.voice_id} className="card p-5 flex flex-col items-center text-center transition-all group relative overflow-hidden hover:border-lime">
@@ -1632,6 +2067,23 @@ export default function Dashboard() {
             </div>
           )}
 
+          {activeTab === "pane-docs" && (
+            <div className="tab-pane active">
+              <DocsPane
+                apiBaseUrl={apiBaseUrl}
+                onCopyFeedback={(msg) => {
+                  setDocsCopyFeedback(msg);
+                  setTimeout(() => setDocsCopyFeedback(""), 2000);
+                }}
+              />
+              {docsCopyFeedback && (
+                <div className="fixed bottom-6 right-6 px-4 py-2 rounded-lg bg-lime text-bg font-medium text-sm shadow-lg z-50">
+                  {docsCopyFeedback}
+                </div>
+              )}
+            </div>
+          )}
+
           {activeTab === "pane-settings" && (
             <div className="tab-pane active">
               <div className="field">
@@ -1646,7 +2098,7 @@ export default function Dashboard() {
                 <label>Output Format</label>
                 <select title="Default audio output format">
                   <option>mp3_44100_128</option>
-                  <option>wav_44100_16bit</option>
+                  <option>wav_44100</option>
                   <option>pcm_24000</option>
                 </select>
               </div>
@@ -1664,7 +2116,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {!["pane-tts", "pane-stt", "pane-clone", "pane-agents", "pane-history", "pane-voices", "pane-settings"].includes(activeTab) && (
+          {!["pane-tts", "pane-stt", "pane-clone", "pane-agents", "pane-call-logs", "pane-history", "pane-voices", "pane-docs", "pane-settings"].includes(activeTab) && (
             <div className="tab-pane active placeholder-pane">
               Coming Soon: {activeItem?.label}
             </div>
@@ -1683,7 +2135,7 @@ export default function Dashboard() {
               )}
               {callStatus === "active" && (
                 <>
-                  <div className="text-lime font-bold tracking-widest uppercase text-xs">Orbit Web Call</div>
+                  <div className="text-lime font-bold tracking-widest uppercase text-xs">Web Call</div>
                   <div className="text-2xs text-faint">{activeAgentId}</div>
                   <div className={`audio-visualizer audio-viz-${audioVizId.replace(/:/g, "")} mt-4`} aria-hidden>
                     <style>{`
@@ -1737,7 +2189,7 @@ export default function Dashboard() {
         <div className="modal-overlay flex">
           <div className="modal">
             <div className="title mb-5">
-              <h1>🔑 Global API Configuration</h1>
+              <h1>🔑 Configuration</h1>
               <small>Environment variables are already configured.</small>
             </div>
             <div className="flex gap-2.5 justify-end mt-6">

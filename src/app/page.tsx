@@ -594,6 +594,8 @@ export default function Dashboard() {
   const [dialerNumber, setDialerNumber] = useState("");
   const [phonebookEntries, setPhonebookEntries] = useState<{ name: string; number: string }[]>([]);
   const [selectedDialerAgentId, setSelectedDialerAgentId] = useState("");
+  const [dialerCallStatus, setDialerCallStatus] = useState("");
+  const [isDialerCalling, setIsDialerCalling] = useState(false);
   const longPress0Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPress0HandledRef = useRef(false);
 
@@ -1281,15 +1283,40 @@ export default function Dashboard() {
                       <div className="dialer-actions">
                         <button
                           className="btn primary dialer-call-btn"
-                          onClick={() => {
+                          onClick={async () => {
                             const num = dialerNumber.replace(/\s/g, "").replace(/[^\d+]/g, "");
-                            if (num) window.location.href = `tel:${num}`;
+                            if (!num) return;
+                            if (!selectedDialerAgentId) {
+                              setDialerCallStatus("Select an agent first.");
+                              return;
+                            }
+                            setIsDialerCalling(true);
+                            setDialerCallStatus("");
+                            try {
+                              const res = await fetch("/api/orbit/call", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ assistantId: selectedDialerAgentId, customerNumber: num }),
+                              });
+                              const data = await res.json();
+                              if (!res.ok) throw new Error(data?.error || "Outbound call failed");
+                              setDialerCallStatus("Call initiated. VAPI is calling the number.");
+                            } catch (err) {
+                              setDialerCallStatus("Error: " + (err instanceof Error ? err.message : "Call failed"));
+                            } finally {
+                              setIsDialerCalling(false);
+                            }
                           }}
-                          disabled={!dialerNumber.trim()}
+                          disabled={!dialerNumber.trim() || isDialerCalling}
                         >
-                          <Phone size={20} />
-                          Call
+                          {isDialerCalling ? <Loader2 size={20} className="animate-spin" /> : <Phone size={20} />}
+                          {isDialerCalling ? "Calling…" : "Call"}
                         </button>
+                        {dialerCallStatus && (
+                          <span className={`text-2xs block mt-1 ${dialerCallStatus.startsWith("Error") ? "text-bad" : "text-muted"}`}>
+                            {dialerCallStatus}
+                          </span>
+                        )}
                         <label className="upload-phonebook-btn">
                           <Upload size={14} />
                           Upload phonebook

@@ -94,3 +94,30 @@ export async function createAssistantFromScratch(params: {
   };
   return orbitCoreRequest('POST', '/assistant', payload);
 }
+
+/**
+ * Create an outbound phone call via VAPI (VAPI calls the customer's number).
+ * Requires VAPI_PHONE_NUMBER_ID in .env (phone number to call FROM).
+ */
+export async function createOutboundCall(params: {
+  assistantId: string;
+  customerNumber: string;
+}) {
+  const phoneNumberId = (process.env.VAPI_PHONE_NUMBER_ID || '').trim();
+  if (!phoneNumberId) {
+    throw new Error(
+      'Missing VAPI_PHONE_NUMBER_ID. Add a VAPI phone number ID from dashboard.vapi.ai to .env.local for outbound calls.'
+    );
+  }
+  const e164 = params.customerNumber.startsWith('+')
+    ? params.customerNumber
+    : params.customerNumber.length === 10
+      ? `+1${params.customerNumber}`
+      : `+${params.customerNumber}`;
+  const payload = {
+    assistantId: params.assistantId,
+    phoneNumberId,
+    customer: { number: e164 },
+  };
+  return orbitCoreRequest('POST', '/call', payload);
+}

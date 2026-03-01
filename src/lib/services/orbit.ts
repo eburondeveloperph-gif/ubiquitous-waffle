@@ -79,9 +79,9 @@ export async function fetchAssistantById(id: string) {
 export async function updateAssistant(id: string, payload: Partial<{
   name: string;
   firstMessage: string;
-  model: { messages: { role: string; content: string }[] };
+  model: { provider: string; model: string; messages: { role: string; content: string }[] };
   voice: { provider: string; voiceId: string };
-  transcriber: { language: string };
+  transcriber: { provider: string; model: string; language: string };
 }>) {
   return orbitCoreRequest('PATCH', `/assistant/${id}`, payload) as Promise<VapiAssistant>;
 }

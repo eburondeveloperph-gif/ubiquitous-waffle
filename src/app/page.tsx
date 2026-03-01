@@ -491,10 +491,18 @@ export default function Dashboard() {
             if (saveRes.ok) {
               const saved = await saveRes.json();
               setHistory(prev => [saved, ...prev]);
+              setTtsStatus("Ready · Saved to history");
+            } else {
+              const errData = await saveRes.json().catch(() => ({}));
+              console.warn("TTS history save failed:", saveRes.status, errData);
+              setTtsStatus("Ready · Could not save to history");
             }
-          } catch {
-            // Non-blocking: playback already succeeded
+          } catch (err) {
+            console.warn("TTS history save error:", err);
+            setTtsStatus("Ready · Could not save to history");
           }
+        } else {
+          setTtsStatus("Ready · Sign in to save history");
         }
       }
     } catch (error) {

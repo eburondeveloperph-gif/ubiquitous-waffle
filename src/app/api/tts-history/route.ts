@@ -26,7 +26,10 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const supabase = createSupabaseClientFromRequest(request);
   if (!supabase) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(
+      { error: 'Unauthorized. Supabase may not be configured (NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY) or no auth token provided.' },
+      { status: 401 }
+    );
   }
   try {
     const { data: { user } } = await supabase.auth.getUser();
@@ -51,7 +54,10 @@ export async function POST(request: Request) {
       .upload(path, audioFile, { contentType: audioFile.type || 'audio/mpeg', upsert: false });
     if (uploadError) {
       console.error('tts-history upload error:', uploadError);
-      return NextResponse.json({ error: uploadError.message }, { status: 500 });
+      return NextResponse.json(
+        { error: `Storage upload failed: ${uploadError.message}. Ensure tts-audio bucket exists (run supabase/migrations/20250301000000_tts_history.sql).` },
+        { status: 500 }
+      );
     }
     const { data: row, error: insertError } = await supabase
       .from('tts_history')
@@ -67,7 +73,10 @@ export async function POST(request: Request) {
     if (insertError) {
       console.error('tts-history insert error:', insertError);
       await supabase.storage.from('tts-audio').remove([path]);
-      return NextResponse.json({ error: insertError.message }, { status: 500 });
+      return NextResponse.json(
+        { error: `Database insert failed: ${insertError.message}. Ensure tts_history table exists (run supabase/migrations/20250301000000_tts_history.sql).` },
+        { status: 500 }
+      );
     }
     return NextResponse.json(row);
   } catch (err) {

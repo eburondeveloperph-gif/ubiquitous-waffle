@@ -15,14 +15,17 @@ create table if not exists public.tts_history (
 -- RLS: users can only see and manage their own rows.
 alter table public.tts_history enable row level security;
 
+drop policy if exists "Users can select own tts_history" on public.tts_history;
 create policy "Users can select own tts_history"
   on public.tts_history for select
   using (auth.uid() = user_id);
 
+drop policy if exists "Users can insert own tts_history" on public.tts_history;
 create policy "Users can insert own tts_history"
   on public.tts_history for insert
   with check (auth.uid() = user_id);
 
+drop policy if exists "Users can delete own tts_history" on public.tts_history;
 create policy "Users can delete own tts_history"
   on public.tts_history for delete
   using (auth.uid() = user_id);
@@ -33,14 +36,17 @@ values ('tts-audio', 'tts-audio', false)
 on conflict (id) do nothing;
 
 -- Storage RLS: users can read/insert/delete only under their own folder.
+drop policy if exists "Users can read own tts-audio" on storage.objects;
 create policy "Users can read own tts-audio"
   on storage.objects for select
   using (bucket_id = 'tts-audio' and (storage.foldername(name))[1] = auth.uid()::text);
 
+drop policy if exists "Users can insert own tts-audio" on storage.objects;
 create policy "Users can insert own tts-audio"
   on storage.objects for insert
   with check (bucket_id = 'tts-audio' and (storage.foldername(name))[1] = auth.uid()::text);
 
+drop policy if exists "Users can delete own tts-audio" on storage.objects;
 create policy "Users can delete own tts-audio"
   on storage.objects for delete
   using (bucket_id = 'tts-audio' and (storage.foldername(name))[1] = auth.uid()::text);

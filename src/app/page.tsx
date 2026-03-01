@@ -256,23 +256,10 @@ export default function Dashboard() {
   };
 
   const fetchRealTimeHistory = useCallback(async () => {
-    if (!user) {
-      setHistory([]);
-      setHistoryError(null);
-      return;
-    }
     setIsHistoryLoading(true);
     setHistoryError(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        setHistory([]);
-        setHistoryError("Not signed in.");
-        return;
-      }
-      const res = await fetch("/api/tts-history", {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
+      const res = await fetch("/api/echo/history?page_size=50&sort_direction=desc");
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
         const msg = (errBody as { error?: string })?.error || `Failed to load history (${res.status})`;
@@ -281,7 +268,15 @@ export default function Dashboard() {
         return;
       }
       const data = await res.json();
-      setHistory(Array.isArray(data) ? data : []);
+      const items = Array.isArray(data) ? data : [];
+      setHistory(items.map((h: { history_item_id: string; text: string; voice_id: string; voice_name: string; date_unix: number }) => ({
+        id: h.history_item_id,
+        text: h.text,
+        voice_id: h.voice_id,
+        voice_name: h.voice_name,
+        audio_path: "",
+        created_at: new Date(h.date_unix * 1000).toISOString(),
+      })));
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to fetch history.";
       setHistoryError(msg);
@@ -289,13 +284,13 @@ export default function Dashboard() {
     } finally {
       setIsHistoryLoading(false);
     }
-  }, [user]);
+  }, []);
 
   useEffect(() => {
     if (activeTab === "pane-history") {
       fetchRealTimeHistory();
     }
-  }, [activeTab, user, fetchRealTimeHistory]);
+  }, [activeTab, fetchRealTimeHistory]);
 
   const fetchCallLogs = useCallback(async () => {
     setIsCallLogsLoading(true);
@@ -610,17 +605,9 @@ export default function Dashboard() {
     playHistoryAbortRef.current?.abort();
     playHistoryAbortRef.current = new AbortController();
     const signal = playHistoryAbortRef.current.signal;
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) {
-      setTtsStatus("Sign in to play history.");
-      return;
-    }
     setTtsStatus("Fetching audio...");
     try {
-      const res = await fetch(`/api/tts-history/${id}/audio`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        signal,
-      });
+      const res = await fetch(`/api/echo/history/${id}`, { signal });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
         const msg = (errBody as { error?: string })?.error || res.statusText || "Failed to fetch history audio";
@@ -641,16 +628,9 @@ export default function Dashboard() {
   };
 
   const handleDownloadHistory = async (id: string, text: string, format: "mp3" | "wav") => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) {
-      setTtsStatus("Sign in to download.");
-      return;
-    }
     setTtsStatus("Preparing download...");
     try {
-      const res = await fetch(`/api/tts-history/${id}/audio?format=${format}`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
+      const res = await fetch(`/api/echo/history/${id}?format=${format}`);
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
         const msg = (errBody as { error?: string })?.error || res.statusText || "Failed to fetch history audio";
@@ -1974,15 +1954,9 @@ export default function Dashboard() {
             <div className="tab-pane active">
               <div className="flex justify-between items-center mb-4">
                 <label className="block">TTS History</label>
-                {user ? (
-                  <button className="text-2xs text-lime bg-transparent hover:text-white" onClick={fetchRealTimeHistory}>Refresh</button>
-                ) : null}
+                <button className="text-2xs text-lime bg-transparent hover:text-white" onClick={fetchRealTimeHistory}>Refresh</button>
               </div>
-              {!user ? (
-                <div className="placeholder-pane h-32 flex items-center justify-center text-muted">
-                  Sign in to save and view your TTS history.
-                </div>
-              ) : (
+              {(
                 <>
                   {historyAudioUrl && (
                     <div className="mb-4 p-4 rounded-xl border border-border bg-panel flex items-center gap-4">
@@ -2002,7 +1976,7 @@ export default function Dashboard() {
                     ) : historyError ? (
                       <div className="placeholder-pane h-32 flex flex-col items-center justify-center gap-2 text-center">
                         <span className="text-bad">{historyError}</span>
-                        <span className="text-2xs text-muted">Ensure Supabase tables exist (run SETUP.sql) and RLS policies allow access.</span>
+                        <span className="text-2xs text-muted">Ensure TTS_PROVIDER_KEY (or ELEVENLABS_API_KEY) is set.</span>
                         <button className="btn text-2xs mt-2" onClick={fetchRealTimeHistory}>Retry</button>
                       </div>
                     ) : history.length === 0 ? (

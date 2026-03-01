@@ -1281,11 +1281,14 @@ export default function Dashboard() {
                       <div className="dialer-actions">
                         <button
                           className="btn primary dialer-call-btn"
-                          onClick={() => selectedDialerAgentId && handleToggleCall(selectedDialerAgentId)}
-                          disabled={!selectedDialerAgentId || callStatus === "loading"}
+                          onClick={() => {
+                            const num = dialerNumber.replace(/\s/g, "").replace(/[^\d+]/g, "");
+                            if (num) window.location.href = `tel:${num}`;
+                          }}
+                          disabled={!dialerNumber.trim()}
                         >
-                          {callStatus === "loading" ? <Loader2 size={20} className="animate-spin" /> : <Phone size={20} />}
-                          {callStatus === "active" ? "End" : "Call"}
+                          <Phone size={20} />
+                          Call
                         </button>
                         <label className="upload-phonebook-btn">
                           <Upload size={14} />

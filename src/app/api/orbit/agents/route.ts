@@ -13,13 +13,19 @@ export async function POST(req: Request) {
         name: body.name,
         firstMessage: body.firstMessage || undefined,
         model: {
+          provider: 'openai',
+          model: 'gpt-4o-mini',
           messages: [
             { role: 'system', content: body.systemPrompt || 'You are a helpful AI assistant.' },
           ],
         },
         ...(voice && { voice: voice }),
-        ...(body.language && {
-          transcriber: { language: toNova2Language(body.language) },
+        ...(body.language !== undefined && {
+          transcriber: {
+            provider: 'deepgram',
+            model: 'nova-2',
+            language: toNova2Language(body.language),
+          },
         }),
       });
       return NextResponse.json(result);
@@ -39,7 +45,16 @@ export async function POST(req: Request) {
     const result = await createAgent(body);
     return NextResponse.json(result);
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const raw = error instanceof Error ? error.message : 'Unknown error';
+    const isValidationError = typeof raw === 'string' && (
+      raw.includes('must be one of the following values') ||
+      raw.includes('Bad Request') ||
+      raw.includes('transcriber.provider') ||
+      raw.includes('model.provider')
+    );
+    const message = isValidationError
+      ? 'Invalid agent configuration. Please try again or contact support.'
+      : raw;
+    return NextResponse.json({ error: message }, { status: isValidationError ? 400 : 500 });
   }
 }

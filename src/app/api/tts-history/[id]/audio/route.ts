@@ -27,7 +27,7 @@ export async function GET(
     }
 
     if (format === 'wav' && row.text && row.voice_id) {
-      const blob = await generateTTS(row.voice_id, row.text, 'echo_flash_v2.5', 'wav_44100_16bit');
+      const blob = await generateTTS(row.voice_id, row.text, 'echo_flash_v2.5', 'wav_44100');
       return new NextResponse(blob, {
         headers: {
           'Content-Type': 'audio/wav',
@@ -38,7 +38,7 @@ export async function GET(
     }
 
     if (!row.audio_path && row.text && row.voice_id) {
-      const outputFormat = format === 'wav' ? 'wav_44100_16bit' : 'mp3_44100_128';
+      const outputFormat = format === 'wav' ? 'wav_44100' : 'mp3_44100_128';
       const blob = await generateTTS(row.voice_id, row.text, 'echo_flash_v2.5', outputFormat);
       return new NextResponse(blob, {
         headers: {
